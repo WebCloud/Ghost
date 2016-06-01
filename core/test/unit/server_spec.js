@@ -1,9 +1,6 @@
-/*globals describe, beforeEach, it*/
-var net             = require('net'),
-    assert          = require('assert'),
-    should          = require('should'),
-    request         = require('request'),
-    server          = require('../../server'),
+/*globals describe, it*/
+var should          = require('should'),
+    http            = require('http'),
     config          = require('../../../config');
 
 describe('Server', function () {
@@ -11,16 +8,14 @@ describe('Server', function () {
         host = config.testing.server.host,
         url = 'http://' + host + ':' + port;
 
-
     it('should not start a connect server when required', function (done) {
-        request(url, function (error, response, body) {
-            assert.equal(response, undefined);
-            assert.equal(body, undefined);
-            assert.notEqual(error, undefined);
-            assert.equal(error.code, 'ECONNREFUSED');
+        http.get(url, function () {
+            done('This request should not have worked');
+        }).on('error', function (error) {
+            should(error).not.equal(undefined);
+            should(error.code).equal('ECONNREFUSED');
+
             done();
         });
     });
-
 });
-

@@ -1,32 +1,35 @@
 
 var _           = require('lodash'),
-    when        = require('when'),
-    errors      = require('../errorHandling'),
+    Promise     = require('bluebird'),
+    errors      = require('../errors'),
     api         = require('../api'),
     loader      = require('./loader'),
+    i18n        = require('../i18n'),
+    config      = require('../config'),
     // Holds the available apps
     availableApps = {};
 
-
 function getInstalledApps() {
-    return api.settings.read('installedApps').then(function (installed) {
+    return api.settings.read({context: {internal: true}, key: 'installedApps'}).then(function (response) {
+        var installed = response.settings[0];
+
         installed.value = installed.value || '[]';
 
         try {
             installed = JSON.parse(installed.value);
         } catch (e) {
-            return when.reject(e);
+            return Promise.reject(e);
         }
 
-        return installed;
+        return installed.concat(config.internalApps);
     });
 }
 
 function saveInstalledApps(installedApps) {
     return getInstalledApps().then(function (currentInstalledApps) {
-        var updatedAppsInstalled = _.uniq(installedApps.concat(currentInstalledApps));
+        var updatedAppsInstalled = _.difference(_.uniq(installedApps.concat(currentInstalledApps)), config.internalApps);
 
-        return api.settings.edit('installedApps', updatedAppsInstalled);
+        return api.settings.edit({settings: [{key: 'installedApps', value: updatedAppsInstalled}]}, {context: {internal: true}});
     });
 }
 
@@ -36,16 +39,21 @@ module.exports = {
 
         try {
             // We have to parse the value because it's a string
-            api.settings.read('activeApps').then(function (aApps) {
+            api.settings.read({context: {internal: true}, key: 'activeApps'}).then(function (response) {
+                var aApps = response.settings[0];
+
                 appsToLoad = JSON.parse(aApps.value) || [];
+
+                appsToLoad = appsToLoad.concat(config.internalApps);
             });
         } catch (e) {
             errors.logError(
-                'Failed to parse activeApps setting value: ' + e.message,
-                'Your apps will not be loaded.',
-                'Check your settings table for typos in the activeApps value. It should look like: ["app-1", "app2"] (double quotes required).'
+                i18n.t('errors.apps.failedToParseActiveAppsSettings.error', {message: e.message}),
+                i18n.t('errors.apps.failedToParseActiveAppsSettings.context'),
+                i18n.t('errors.apps.failedToParseActiveAppsSettings.help')
             );
-            return when.resolve();
+
+            return Promise.resolve();
         }
 
         // Grab all installed apps, install any not already installed that are in appsToLoad.
@@ -55,7 +63,7 @@ module.exports = {
                     // After loading the app, add it to our hash of loaded apps
                     loadedApps[name] = loadedApp;
 
-                    return when.resolve(loadedApp);
+                    return Promise.resolve(loadedApp);
                 },
                 loadPromises = _.map(appsToLoad, function (app) {
                     // If already installed, just activate the app
@@ -73,17 +81,17 @@ module.exports = {
                     });
                 });
 
-            return when.all(loadPromises).then(function () {
+            return Promise.all(loadPromises).then(function () {
                 // Save our installed apps to settings
                 return saveInstalledApps(_.keys(loadedApps));
             }).then(function () {
                 // Extend the loadedApps onto the available apps
                 _.extend(availableApps, loadedApps);
-            }).otherwise(function (err) {
+            }).catch(function (err) {
                 errors.logError(
                     err.message || err,
-                    'The app will not be loaded',
-                    'Check with the app creator, or read the app documentation for more details on app requirements'
+                    i18n.t('errors.apps.appWillNotBeLoaded.error'),
+                    i18n.t('errors.apps.appWillNotBeLoaded.help')
                 );
             });
         });

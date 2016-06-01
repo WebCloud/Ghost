@@ -1,192 +1,248 @@
-/*globals describe, beforeEach, afterEach, it*/
+/*globals describe, afterEach, beforeEach, it*/
 var should          = require('should'),
-    sinon           = require('sinon'),
-    when            = require('when'),
-    _               = require("lodash"),
-    cp              = require('child_process'),
-    rewire          = require("rewire"),
-    testUtils       = require('../utils'),
+    Promise         = require('bluebird'),
 
     // Stuff we are testing
-    mailer          = rewire('../../server/mail'),
-    defaultConfig   = require('../../../config'),
-    SMTP,
-    SENDMAIL,
-    fakeConfig,
-    fakeSettings,
-    fakeSendmail,
-    sandbox = sinon.sandbox.create(),
-    config;
+    GhostMail       = require('../../server/mail'),
+    configUtils     = require('../utils/configUtils'),
+    i18n            = require('../../server/i18n'),
+    mailer,
 
-// Mock SMTP config
-SMTP = {
-    transport: 'SMTP',
-    options: {
-        service: 'Gmail',
-        auth: {
-            user: 'nil',
-            pass: '123'
+    // Mock SMTP config
+    SMTP = {
+        transport: 'SMTP',
+        options: {
+            service: 'Gmail',
+            auth: {
+                user: 'nil',
+                pass: '123'
+            }
         }
-    }
-};
+    },
 
-// Mock Sendmail config
-SENDMAIL = {
-    transport: 'sendmail',
-    options: {
-        path: '/nowhere/sendmail'
-    }
-};
-
-describe("Mail", function () {
-    var overrideConfig = function (newConfig) {
-        mailer.__set__('config',  sandbox.stub().returns(
-            _.extend({}, defaultConfig, newConfig)
-        ));
+    // test data
+    mailDataNoDomain = {
+        to: 'joe@doesntexistexample091283zalgo.com',
+        subject: 'testemail',
+        html: '<p>This</p>'
+    },
+    mailDataNoServer = {
+        to: 'joe@example.com',
+        subject: 'testemail',
+        html: '<p>This</p>'
+    },
+    mailDataIncomplete = {
+        subject: 'testemail',
+        html: '<p>This</p>'
     };
 
-    beforeEach(function () {
-        // Mock config and settings
-        fakeConfig = _.extend({}, defaultConfig);
-        fakeSettings = {
-            url: 'http://test.tryghost.org',
-            email: 'ghost-test@localhost'
-        };
-        fakeSendmail = '/fake/bin/sendmail';
+i18n.init();
 
-        config = sinon.stub().returns(fakeConfig);
-
-        sandbox.stub(mailer, "isWindows", function () {
-            return false;
-        });
-
-        sandbox.stub(mailer, "detectSendmail", function () {
-            return when.resolve(fakeSendmail);
-        });
-    });
-
+describe('Mail', function () {
     afterEach(function () {
-        sandbox.restore();
+        mailer = null;
+
+        configUtils.restore();
     });
 
     it('should attach mail provider to ghost instance', function () {
+        mailer = new GhostMail();
+
         should.exist(mailer);
-        mailer.should.have.property('init');
+        mailer.should.have.property('send').and.be.a.Function();
+    });
+
+    it('should setup SMTP transport on initialization', function () {
+        configUtils.set({mail: SMTP});
+        mailer = new GhostMail();
+
         mailer.should.have.property('transport');
-        mailer.should.have.property('send').and.be.a.function;
+        mailer.transport.transportType.should.eql('SMTP');
+        mailer.transport.sendMail.should.be.a.Function();
     });
 
-    it('should setup SMTP transport on initialization', function (done) {
-        overrideConfig({mail: SMTP});
-        mailer.init().then(function () {
-            mailer.should.have.property('transport');
-            mailer.transport.transportType.should.eql('SMTP');
-            mailer.transport.sendMail.should.be.a.function;
+    it('should fallback to direct if config is empty', function () {
+        configUtils.set({mail: {}});
+
+        mailer = new GhostMail();
+
+        mailer.should.have.property('transport');
+        mailer.transport.transportType.should.eql('DIRECT');
+    });
+
+    it('sends valid message successfully ', function (done) {
+        configUtils.set({mail: {transport: 'stub'}});
+
+        mailer = new GhostMail();
+
+        mailer.transport.transportType.should.eql('STUB');
+
+        mailer.send(mailDataNoServer).then(function (response) {
+            should.exist(response.message);
+            should.exist(response.envelope);
+            response.envelope.to.should.containEql('joe@example.com');
+
             done();
-        }).then(null, done);
+        }).catch(done);
     });
 
-    it('should setup sendmail transport on initialization', function (done) {
-        overrideConfig({mail: SENDMAIL});
-        mailer.init().then(function () {
-            mailer.should.have.property('transport');
-            mailer.transport.transportType.should.eql('SENDMAIL');
-            mailer.transport.sendMail.should.be.a.function;
+    it('handles failure', function (done) {
+        configUtils.set({mail: {transport: 'stub', options: {error: 'Stub made a boo boo :('}}});
+
+        mailer = new GhostMail();
+
+        mailer.transport.transportType.should.eql('STUB');
+
+        mailer.send(mailDataNoServer).then(function () {
+            done(new Error('Stub did not error'));
+        }).catch(function (error) {
+            error.message.should.eql('Error: Stub made a boo boo :(');
             done();
-        }).then(null, done);
-    });
-
-    it('should fallback to sendmail if no config set', function (done) {
-        overrideConfig({mail: null});
-        mailer.init().then(function () {
-            mailer.should.have.property('transport');
-            mailer.transport.transportType.should.eql('SENDMAIL');
-            mailer.transport.options.path.should.eql(fakeSendmail);
-            done();
-        }).then(null, done);
-    });
-
-    it('should fallback to sendmail if config is empty', function (done) {
-        overrideConfig({mail: {}});
-        mailer.init().then(function () {
-            mailer.should.have.property('transport');
-            mailer.transport.transportType.should.eql('SENDMAIL');
-            mailer.transport.options.path.should.eql(fakeSendmail);
-            done();
-        }).then(null, done);
-    });
-
-    it('should disable transport if config is empty & sendmail not found', function (done) {
-        overrideConfig({mail: {}});
-        mailer.detectSendmail.restore();
-        sandbox.stub(mailer, "detectSendmail", when.reject);
-        mailer.init().then(function () {
-            should.not.exist(mailer.transport);
-            done();
-        }).then(null, done);
-    });
-
-    it('should disable transport if config is empty & platform is win32', function (done) {
-        overrideConfig({mail: {}});
-        mailer.detectSendmail.restore();
-        mailer.isWindows.restore();
-        sandbox.stub(mailer, 'isWindows', function () {
-            return true;
-        });
-        mailer.init().then(function () {
-            should.not.exist(mailer.transport);
-            done();
-        }).then(null, done);
-    });
-
-    it('should fail to send messages when no transport is set', function (done) {
-        mailer.detectSendmail.restore();
-        sandbox.stub(mailer, "detectSendmail", when.reject);
-        mailer.init().then(function () {
-            mailer.send().then(function () {
-                should.fail();
-                done();
-            }, function (err) {
-                err.should.be.an.instanceOf(Error);
-                done();
-            });
-        });
+        }).catch(done);
     });
 
     it('should fail to send messages when given insufficient data', function (done) {
-        when.settle([
-            mailer.send(),
-            mailer.send({}),
-            mailer.send({ subject: '123' }),
-            mailer.send({ subject: '', html: '123' })
+        mailer = new GhostMail();
+
+        Promise.all([
+            mailer.send().reflect(),
+            mailer.send({}).reflect(),
+            mailer.send({subject: '123'}).reflect(),
+            mailer.send({subject: '', html: '123'}).reflect()
         ]).then(function (descriptors) {
             descriptors.forEach(function (d) {
-                d.state.should.equal('rejected');
-                d.reason.should.be.an.instanceOf(Error);
+                d.isFulfilled().should.be.false();
+                d.reason().should.be.an.instanceOf(Error);
+                d.reason().message.should.eql('Error: Incomplete message data.');
             });
             done();
+        }).catch(done);
+    });
+
+    describe('Direct', function () {
+        beforeEach(function () {
+            configUtils.set({mail: {}});
+
+            mailer = new GhostMail();
+        });
+
+        afterEach(function () {
+            mailer = null;
+        });
+
+        it('return correct failure message for domain doesn\'t exist', function (done) {
+            mailer.transport.transportType.should.eql('DIRECT');
+
+            mailer.send(mailDataNoDomain).then(function () {
+                done(new Error('Error message not shown.'));
+            }, function (error) {
+                error.message.should.startWith('Error: Failed to send email');
+                done();
+            }).catch(done);
+        });
+
+        it('return correct failure message for no mail server at this address', function (done) {
+            mailer.transport.transportType.should.eql('DIRECT');
+
+            mailer.send(mailDataNoServer).then(function () {
+                done(new Error('Error message not shown.'));
+            }, function (error) {
+                error.message.should.eql('Error: Failed to send email.');
+                done();
+            }).catch(done);
+        });
+
+        it('return correct failure message for incomplete data', function (done) {
+            mailer.transport.transportType.should.eql('DIRECT');
+
+            mailer.send(mailDataIncomplete).then(function () {
+                done(new Error('Error message not shown.'));
+            }, function (error) {
+                error.message.should.eql('Error: Incomplete message data.');
+                done();
+            }).catch(done);
         });
     });
 
-    it('should use from address as configured in config.js', function (done) {
-        overrideConfig({mail:{fromaddress: 'static@example.com'}});
-        mailer.fromAddress().should.equal('static@example.com');
-        done();
-    });
+    describe('From address', function () {
+        it('should use the config', function () {
+            configUtils.set({
+                mail: {
+                    from: '"Blog Title" <static@example.com>'
+                }
+            });
 
-    it('should fall back to ghost@[blog.url] as from address', function (done) {
-        // Standard domain
-        overrideConfig({url: 'http://default.com', mail:{fromaddress: null}});
-        mailer.fromAddress().should.equal('ghost@default.com');
+            mailer = new GhostMail();
 
-        // Trailing slash
-        overrideConfig({url: 'http://default.com/', mail:{}});
-        mailer.fromAddress().should.equal('ghost@default.com');
+            mailer.from().should.equal('"Blog Title" <static@example.com>');
+        });
 
-        // Strip Port
-        overrideConfig({url: 'http://default.com:2368/', mail:{}});
-        mailer.fromAddress().should.equal('ghost@default.com');
+        it('should fall back to [blog.title] <ghost@[blog.url]>', function () {
+            // Standard domain
+            configUtils.set({url: 'http://default.com', mail: {from: null}, theme: {title: 'Test'}});
 
-        done();
+            mailer = new GhostMail();
+
+            mailer.from().should.equal('"Test" <ghost@default.com>');
+
+            // Trailing slash
+            configUtils.set({url: 'http://default.com/', mail: {from: null}, theme: {title: 'Test'}});
+            mailer.from().should.equal('"Test" <ghost@default.com>');
+
+            // Strip Port
+            configUtils.set({url: 'http://default.com:2368/', mail: {from: null}, theme: {title: 'Test'}});
+            mailer.from().should.equal('"Test" <ghost@default.com>');
+        });
+
+        it('should use mail.from if both from and fromaddress are present', function () {
+            // Standard domain
+            configUtils.set({mail: {from: '"bar" <from@default.com>', fromaddress: '"Qux" <fa@default.com>'}});
+
+            mailer = new GhostMail();
+
+            mailer.from().should.equal('"bar" <from@default.com>');
+        });
+
+        it('should attach blog title if from or fromaddress are only email addresses', function () {
+            // from and fromaddress are both set
+            configUtils.set({mail: {from: 'from@default.com', fromaddress: 'fa@default.com'}, theme: {title: 'Test'}});
+
+            mailer = new GhostMail();
+
+            mailer.from().should.equal('"Test" <from@default.com>');
+
+            // only from set
+            configUtils.set({mail: {from: 'from@default.com', fromaddress: null}, theme: {title: 'Test'}});
+            mailer.from().should.equal('"Test" <from@default.com>');
+
+            // only fromaddress set
+            configUtils.set({mail: {from: null, fromaddress: 'fa@default.com'}, theme: {title: 'Test'}});
+            mailer.from().should.equal('"Test" <fa@default.com>');
+        });
+
+        it('should ignore theme title if from address is Title <email@address.com> format', function () {
+            // from and fromaddress are both set
+            configUtils.set({mail: {from: '"R2D2" <from@default.com>', fromaddress: '"C3PO" <fa@default.com>'}, theme: {title: 'Test'}});
+
+            mailer = new GhostMail();
+
+            mailer.from().should.equal('"R2D2" <from@default.com>');
+
+            // only from set
+            configUtils.set({mail: {from: '"R2D2" <from@default.com>', fromaddress: null}, theme: {title: 'Test'}});
+            mailer.from().should.equal('"R2D2" <from@default.com>');
+
+            // only fromaddress set
+            configUtils.set({mail: {from: null, fromaddress: '"C3PO" <fa@default.com>'}, theme: {title: 'Test'}});
+            mailer.from().should.equal('"C3PO" <fa@default.com>');
+        });
+
+        it('should use default title if not theme title is provided', function () {
+            configUtils.set({url: 'http://default.com:2368/', mail: {from: null}, theme: {title: null}});
+
+            mailer = new GhostMail();
+
+            mailer.from().should.equal('"Ghost at default.com" <ghost@default.com>');
+        });
     });
 });

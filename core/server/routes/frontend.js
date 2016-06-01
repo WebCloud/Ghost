@@ -1,16 +1,49 @@
-var frontend    = require('../controllers/frontend');
+var express         = require('express'),
+    path            = require('path'),
+    config          = require('../config'),
+    frontend        = require('../controllers/frontend'),
+    channels        = require('../controllers/frontend/channels'),
+    utils           = require('../utils'),
 
-module.exports = function (server) {
-    /*jslint regexp: true */
+    frontendRoutes;
 
-    // ### Frontend routes
-    server.get('/rss/', frontend.rss);
-    server.get('/rss/:page/', frontend.rss);
-    server.get('/tag/:slug/rss/', frontend.rss);
-    server.get('/tag/:slug/rss/:page/', frontend.rss);
-    server.get('/tag/:slug/page/:page/', frontend.tag);
-    server.get('/tag/:slug/', frontend.tag);
-    server.get('/page/:page/', frontend.homepage);
-    server.get('/', frontend.homepage);
-    server.get('*', frontend.single);
+frontendRoutes = function frontendRoutes() {
+    var router = express.Router(),
+        subdir = config.paths.subdir,
+        routeKeywords = config.routeKeywords;
+
+    // ### Admin routes
+    router.get(/^\/(logout|signout)\/$/, function redirectToSignout(req, res) {
+        utils.redirect301(res, subdir + '/ghost/signout/');
+    });
+    router.get(/^\/signup\/$/, function redirectToSignup(req, res) {
+        utils.redirect301(res, subdir + '/ghost/signup/');
+    });
+
+    // redirect to /ghost and let that do the authentication to prevent redirects to /ghost//admin etc.
+    router.get(/^\/((ghost-admin|admin|wp-admin|dashboard|signin|login)\/?)$/, function redirectToAdmin(req, res) {
+        utils.redirect301(res, subdir + '/ghost/');
+    });
+
+    // Post Live Preview
+    router.get('/' + routeKeywords.preview + '/:uuid', frontend.preview);
+
+    // Channels
+    router.use(channels.router());
+
+    // Default
+    router.get('*', frontend.single);
+
+    // setup routes for internal apps
+    // @TODO: refactor this to be a proper app route hook for internal & external apps
+    config.internalApps.forEach(function (appName) {
+        var app = require(path.join(config.paths.internalAppPath, appName));
+        if (app.hasOwnProperty('setupRoutes')) {
+            app.setupRoutes(router);
+        }
+    });
+
+    return router;
 };
+
+module.exports = frontendRoutes;
