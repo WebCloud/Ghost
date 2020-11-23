@@ -1,6 +1,12 @@
 module.exports = {
-    accessRules: require('./access-rules'),
+    eagerLoad: require('./eager-load'),
     filter: require('./filter'),
+    order: require('./order'),
+    customQuery: require('./custom-query'),
+    search: require('./search'),
     includeCount: require('./include-count'),
-    pagination: require('./pagination')
+    pagination: require('./pagination'),
+    collision: require('./collision'),
+    transactionEvents: require('./transaction-events'),
+    hasPosts: require('./has-posts')
 };

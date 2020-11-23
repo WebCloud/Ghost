@@ -2,32 +2,44 @@
  * Dependencies
  */
 
-var _ = require('lodash'),
+const _ = require('lodash');
 
-    exports,
-    models;
+// enable event listeners
+require('./base/listeners');
 
 /**
  * Expose all models
  */
-
 exports = module.exports;
 
-models = [
-    'accesstoken',
-    'app-field',
-    'app-setting',
-    'app',
-    'client-trusted-domain',
-    'client',
+const models = [
     'permission',
     'post',
-    'refreshtoken',
     'role',
     'settings',
-    'subscriber',
+    'session',
     'tag',
-    'user'
+    'tag-public',
+    'user',
+    'author',
+    'invite',
+    'webhook',
+    'integration',
+    'api-key',
+    'mobiledoc-revision',
+    'member',
+    'posts-meta',
+    'member-stripe-customer',
+    'stripe-customer-subscription',
+    'email',
+    'email-batch',
+    'email-recipient',
+    'label',
+    'single-use-token',
+    'snippet',
+    // Action model MUST be loaded last as it loops through all of the registered models
+    // Please do not append items to this array.
+    'action'
 ];
 
 function init() {
